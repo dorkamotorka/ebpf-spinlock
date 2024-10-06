@@ -5,8 +5,6 @@ package main
 import (
     "log"
     "time"
-    "flag"
-    "net"
 
     "github.com/cilium/ebpf"
     "github.com/cilium/ebpf/link"
@@ -19,10 +17,6 @@ func main() {
 	log.Fatal(err)
     }
 
-    var ifname string
-    flag.StringVar(&ifname, "i", "lo", "Network interface name where the eBPF program will be attached")
-    flag.Parse()
-
     // Load pre-compiled programs and maps into the kernel.
     var lockObjs lockObjects
     lockObjs = lockObjects{}
@@ -30,31 +24,33 @@ func main() {
 	log.Fatal(err)
     }
 
-    iface, err := net.InterfaceByName(ifname)
-    if err != nil {
-	log.Fatalf("Getting interface %s: %s", ifname, err)
-    }
-
     var key uint32 = 0
     config := lockSharedData{
-	Counter: uint32(0),
+	RejectCount: uint32(0),
+	AllowCount: uint32(0),
 	LastUpdated: uint64(0),
     }
-    err = lockObjs.lockMaps.SharedMap.Update(&key, &config, ebpf.UpdateLock) // // UpdateLock flag updates elements under bpf_spin_lock.
+    err := lockObjs.lockMaps.SharedMap.Update(&key, &config, ebpf.UpdateLock) // UpdateLock flag updates elements under bpf_spin_lock.
     if err != nil {
 	log.Fatalf("Failed to update the map: %v", err)
     }
 
-    // Attach XDP program to the network interface.
-    xdplink, err := link.AttachXDP(link.XDPOptions{ 
-	Program:   lockObjs.XdpProgram,
-	Interface: iface.Index,
+    // Attach LSM programs.
+    lsmLink, err := link.AttachLSM(link.LSMOptions{
+        Program:   lockObjs.PolicePerm,
     })
     if err != nil {
-	log.Fatal("Attaching XDP:", err)
+        log.Fatal("Attaching LSM bprm_creds_from_file:", err)
     }
-    defer xdplink.Close()
+    defer lsmLink.Close()
 
+    lsmLink2, err := link.AttachLSM(link.LSMOptions{
+        Program:   lockObjs.PolicePermChange,
+    })
+    if err != nil {
+        log.Fatal("Attaching LSM task_fix_setuid:", err)
+    }
+    defer lsmLink2.Close()
 
-    time.Sleep(time.Second * 10)
+    time.Sleep(time.Second * 30)
 }

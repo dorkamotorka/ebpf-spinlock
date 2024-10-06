@@ -1,12 +1,15 @@
 //go:build ignore
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+#include <errno.h>
 
-char _license[] SEC("license") = "GPL";
+#define PATHLEN 256
 
 struct shared_data {
     struct bpf_spin_lock lock;   // spinlock to protect the data
-    __u32 counter;                 // shared counter
+    __u32 reject_count;          // Counter for rejected actions
+    __u32 allow_count;           // Counter for allowed actions
     __u64 last_updated;          // timestamp of last update
 };
 
@@ -17,30 +20,110 @@ struct {
     __uint(max_entries, 1);
 } shared_map SEC(".maps");
 
-SEC("xdp")
-int xdp_program(struct xdp_md *ctx) {
+SEC("lsm/bprm_creds_from_file")
+int BPF_PROG(police_perm, struct linux_binprm *bprm, int ret) {
+    char bl[] = "/usr/bin/ls";
+    char buf[PATHLEN];
+
     __u32 key = 0;
     struct shared_data *data;
 
     // Get the shared data from the map
     data = bpf_map_lookup_elem(&shared_map, &key);
     if (!data) {
-        return XDP_ABORTED;
+        return 0;
     }
 
     __u64 time = bpf_ktime_get_ns(); // Get the current time
+    __u32 uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;  // Extract the lower 32 bits (UID)
+    int len = bpf_probe_read_str(buf, sizeof(buf), bprm->filename);
+
+    if (uid == 1001 && len > 11) {
+	if (buf[0] == bl[0] &&
+	    buf[1] == bl[1] &&
+	    buf[2] == bl[2] &&
+	    buf[3] == bl[3] &&
+	    buf[4] == bl[4] &&
+	    buf[5] == bl[5] &&
+	    buf[6] == bl[6] &&
+	    buf[7] == bl[7] &&
+	    buf[8] == bl[8] &&
+	    buf[9] == bl[9] &&
+	    buf[10] == bl[10] &&
+	    buf[11] == bl[11]) {
+		bpf_printk("Reject execution of ls command for user with ID %d", uid);
+    		
+		// Acquire the spinlock
+    		bpf_spin_lock(&data->lock);
+
+    		// Safely update both fields
+    		data->reject_count += 1;
+    		data->last_updated = time;
+
+    		// Release the spinlock
+    		bpf_spin_unlock(&data->lock);
+		return -EPERM;
+	}
+    }
 
     // Acquire the spinlock
     bpf_spin_lock(&data->lock);
 
     // Safely update both fields
-    data->counter += 1;
+    data->allow_count += 1;
     data->last_updated = time;
 
     // Release the spinlock
     bpf_spin_unlock(&data->lock);
 
-    bpf_printk("Counted %d times...", data->counter);
-
-    return XDP_PASS;
+    return 0;
 }
+
+SEC("lsm/task_fix_setuid")
+int BPF_PROG(police_perm_change, struct cred *new, const struct cred *old, int flags, int ret) {
+    if (ret) {
+        return ret;
+    }
+    
+    __u32 key = 0;
+    struct shared_data *data;
+
+    // Get the shared data from the map
+    data = bpf_map_lookup_elem(&shared_map, &key);
+    if (!data) {
+        return 0;
+    }
+
+    __u64 time = bpf_ktime_get_ns(); // Get the current time
+    __u32 pid = bpf_get_current_pid_tgid();
+    __u32 old_uid = old->uid.val;
+    __u32 new_uid = new->uid.val;
+
+    if ((old_uid != 0) &&
+        (old_uid != new_uid)) {
+    	// Acquire the spinlock
+    	bpf_spin_lock(&data->lock);
+
+    	// Safely update both fields
+    	data->reject_count += 1;
+    	data->last_updated = time;
+
+    	// Release the spinlock
+    	bpf_spin_unlock(&data->lock);
+        return -EPERM;
+    }
+
+    // Acquire the spinlock
+    bpf_spin_lock(&data->lock);
+
+    // Safely update both fields
+    data->allow_count += 1;
+    data->last_updated = time;
+
+    // Release the spinlock
+    bpf_spin_unlock(&data->lock);
+
+    return 0;
+}
+
+char _license[] SEC("license") = "GPL";
