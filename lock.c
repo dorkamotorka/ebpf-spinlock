@@ -21,7 +21,7 @@ struct {
 } shared_map SEC(".maps");
 
 SEC("lsm/bprm_creds_from_file")
-int BPF_PROG(police_perm, struct linux_binprm *bprm, int ret) {
+int BPF_PROG(police_perm, struct linux_binprm *bprm) {
     char bl[] = "/usr/bin/ls";
     char buf[PATHLEN];
 
@@ -51,7 +51,7 @@ int BPF_PROG(police_perm, struct linux_binprm *bprm, int ret) {
 	    buf[9] == bl[9] &&
 	    buf[10] == bl[10] &&
 	    buf[11] == bl[11]) {
-		bpf_printk("Reject execution of ls command for user with ID %d", uid);
+		bpf_printk("Reject execution of ls command for user with ID 1001");
     		
 		// Acquire the spinlock
     		bpf_spin_lock(&data->lock);
@@ -62,6 +62,7 @@ int BPF_PROG(police_perm, struct linux_binprm *bprm, int ret) {
 
     		// Release the spinlock
     		bpf_spin_unlock(&data->lock);
+		bpf_printk("Reject count increased from bprm_creds_from_file: %d", data->reject_count);
 		return -EPERM;
 	}
     }
@@ -75,16 +76,17 @@ int BPF_PROG(police_perm, struct linux_binprm *bprm, int ret) {
 
     // Release the spinlock
     bpf_spin_unlock(&data->lock);
+    //bpf_printk("Allow count increased from bprm_creds_from_file: %d", data->allow_count);
 
     return 0;
 }
 
 SEC("lsm/task_fix_setuid")
-int BPF_PROG(police_perm_change, struct cred *new, const struct cred *old, int flags, int ret) {
-    if (ret) {
-        return ret;
-    }
-    
+int BPF_PROG(police_perm_change, struct cred *new, const struct cred *old, int flags) {
+    __u64 time = bpf_ktime_get_ns(); // Get the current time
+    __u32 pid = bpf_get_current_pid_tgid();
+    __u32 old_uid = old->uid.val;
+    __u32 new_uid = new->uid.val;
     __u32 key = 0;
     struct shared_data *data;
 
@@ -94,13 +96,11 @@ int BPF_PROG(police_perm_change, struct cred *new, const struct cred *old, int f
         return 0;
     }
 
-    __u64 time = bpf_ktime_get_ns(); // Get the current time
-    __u32 pid = bpf_get_current_pid_tgid();
-    __u32 old_uid = old->uid.val;
-    __u32 new_uid = new->uid.val;
-
     if ((old_uid != 0) &&
+	(old_uid == 1001) &&
         (old_uid != new_uid)) {
+
+	bpf_printk("Reject user with 1001 from changing their uid through setuid() command");
     	// Acquire the spinlock
     	bpf_spin_lock(&data->lock);
 
@@ -110,6 +110,7 @@ int BPF_PROG(police_perm_change, struct cred *new, const struct cred *old, int f
 
     	// Release the spinlock
     	bpf_spin_unlock(&data->lock);
+	bpf_printk("Reject count increased from task_fix_setuid: %d", data->reject_count);
         return -EPERM;
     }
 
@@ -122,6 +123,7 @@ int BPF_PROG(police_perm_change, struct cred *new, const struct cred *old, int f
 
     // Release the spinlock
     bpf_spin_unlock(&data->lock);
+    //bpf_printk("Allow count increased from task_fix_setuid: %d", data->allow_count);
 
     return 0;
 }

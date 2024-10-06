@@ -52,5 +52,5 @@ func main() {
     }
     defer lsmLink2.Close()
 
-    time.Sleep(time.Second * 30)
+    time.Sleep(time.Second * 60)
 }
