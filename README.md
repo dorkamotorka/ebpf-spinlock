@@ -1,2 +1,7 @@
-# ebpf-spinlock
-Demo for eBPF Spinlocks
+# eBPF Spinlock
+
+```
+go generate
+go build
+sudo ./lock
+```
