@@ -27,7 +27,6 @@ func main() {
     var key uint32 = 0
     config := lockSharedData{
 	RejectCount: uint32(0),
-	AllowCount: uint32(0),
 	LastUpdated: uint64(0),
     }
     err := lockObjs.lockMaps.SharedMap.Update(&key, &config, ebpf.UpdateLock) // UpdateLock flag updates elements under bpf_spin_lock.

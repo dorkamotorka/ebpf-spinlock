@@ -9,7 +9,6 @@
 struct shared_data {
     struct bpf_spin_lock lock;   // spinlock to protect the data
     __u32 reject_count;          // Counter for rejected actions
-    __u32 allow_count;           // Counter for allowed actions
     __u64 last_updated;          // timestamp of last update
 };
 
@@ -67,17 +66,6 @@ int BPF_PROG(police_perm, struct linux_binprm *bprm) {
 	}
     }
 
-    // Acquire the spinlock
-    bpf_spin_lock(&data->lock);
-
-    // Safely update both fields
-    data->allow_count += 1;
-    data->last_updated = time;
-
-    // Release the spinlock
-    bpf_spin_unlock(&data->lock);
-    //bpf_printk("Allow count increased from bprm_creds_from_file: %d", data->allow_count);
-
     return 0;
 }
 
@@ -113,17 +101,6 @@ int BPF_PROG(police_perm_change, struct cred *new, const struct cred *old, int f
 	bpf_printk("Reject count increased from task_fix_setuid: %d", data->reject_count);
         return -EPERM;
     }
-
-    // Acquire the spinlock
-    bpf_spin_lock(&data->lock);
-
-    // Safely update both fields
-    data->allow_count += 1;
-    data->last_updated = time;
-
-    // Release the spinlock
-    bpf_spin_unlock(&data->lock);
-    //bpf_printk("Allow count increased from task_fix_setuid: %d", data->allow_count);
 
     return 0;
 }
