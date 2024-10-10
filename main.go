@@ -14,40 +14,40 @@ import (
 func main() {
     // Allow the current process to lock memory for eBPF resources.
     if err := rlimit.RemoveMemlock(); err != nil {
-	log.Fatal(err)
+	    log.Fatal(err)
     }
 
     // Load pre-compiled programs and maps into the kernel.
     var lockObjs lockObjects
     lockObjs = lockObjects{}
     if err := loadLockObjects(&lockObjs, nil); err != nil {
-	log.Fatal(err)
+	    log.Fatal(err)
     }
 
     var key uint32 = 0
     config := lockSharedData{
-	RejectCount: uint32(0),
-	LastUpdated: uint64(0),
+	    RejectCount: uint32(0),
+	    LastUpdated: uint64(0),
     }
     err := lockObjs.lockMaps.SharedMap.Update(&key, &config, ebpf.UpdateLock) // UpdateLock flag updates elements under bpf_spin_lock.
     if err != nil {
-	log.Fatalf("Failed to update the map: %v", err)
+	    log.Fatalf("Failed to update the map: %v", err)
     }
 
     // Attach LSM programs.
     lsmLink, err := link.AttachLSM(link.LSMOptions{
-        Program:   lockObjs.PolicePerm,
+	    Program:   lockObjs.PolicePerm,
     })
     if err != nil {
-        log.Fatal("Attaching LSM bprm_creds_from_file:", err)
+	    log.Fatal("Attaching LSM bprm_creds_from_file:", err)
     }
     defer lsmLink.Close()
 
     lsmLink2, err := link.AttachLSM(link.LSMOptions{
-        Program:   lockObjs.PolicePermChange,
+	    Program:   lockObjs.PolicePermChange,
     })
     if err != nil {
-        log.Fatal("Attaching LSM task_fix_setuid:", err)
+	    log.Fatal("Attaching LSM task_fix_setuid:", err)
     }
     defer lsmLink2.Close()
 
